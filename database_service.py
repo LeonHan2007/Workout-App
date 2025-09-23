@@ -1,8 +1,8 @@
 import harperdb
 
-url = "https://cloud-1-leonhan.harperdbcloud.com"
-username = "leon"
-password = "5u55yb4k4"
+url = "your-db-url-here"
+username = "your-user"
+password = "your-password"
 db = harperdb.HarperDB(url=url, username=username, password=password)
 
 SCHEMA = "workout_repo"
