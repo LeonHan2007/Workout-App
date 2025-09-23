@@ -1,83 +1,106 @@
-import random
 import streamlit as st
-from yt_extractor import get_video_info
-import database_service as dbs
+from database_service import insert_workout, get_all_workouts, update_workout, delete_workout, workout_exists
+
+st.title("Workout Tracker")
+
+if "refresh" not in st.session_state:
+    st.session_state["refresh"] = False
+if "edit_id" not in st.session_state:
+    st.session_state.edit_id = None
 
 
-@st.cache_data()
-def get_workouts():
-    return dbs.get_all_workouts() 
 
-def get_duration_text(duration):
-    minutes, seconds = divmod(duration, 60)
-    return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+# Sidebar menu
+menu = ["View Workouts", "Add New Workout"]
+choice = st.sidebar.selectbox("Menu", menu)
 
-def fetch_video_info():
-    video_url = st.session_state.video_url_input
-    if video_url:
-        video_info = get_video_info(video_url)
-        if video_info is None:
-            st.session_state.video_info_preview = None
-            st.error("Could not retrieve video info")
+# ---------------- Add Workout ----------------
+if choice == "Add New Workout":
+    st.subheader("Add a new workout")
+    exercise = st.text_input("Exercise name")
+    col_sets, col_reps = st.columns([1,1])
+    sets = col_sets.number_input("Sets", min_value=1, step=1)
+    reps = col_reps.number_input("Reps", min_value=1, step=1)
+
+    # Weight input + unit side by side
+    col_weight, col_unit = st.columns([6, 1])
+    weight = col_weight.number_input("Weight", min_value=0.0, step=0.5, format="%.1f")
+    unit = col_unit.selectbox("", ["lbs", "kg"], index=0)
+
+    if st.button("Add Workout"):
+        if not exercise.strip():
+            st.warning("Please enter an exercise name.")
         else:
-            st.session_state.video_info_preview = video_info
-st.title("Workout App")
-
-menu_options = ["Today's Workout", "All Workouts", "Add Workout"]
-selection = st.sidebar.selectbox("Menu", menu_options)
-
-if selection == "Today's Workout":
-    st.header("Today's Workout")
-    workout_today = get_workouts()
-    if not workout_today:   
-        st.text("No workouts available. Please add some workouts.")
-    else:
-        wo = dbs.get_workout_today()
-        if not wo:
-            workouts = get_workouts()
-            n = len(workouts)
-            idx = random.randint(0, n - 1)
-            workout = workouts[idx]
-            dbs.update_workout_today(workout, insert=True)
-        else:
-            workout = wo[0] 
-            st.text(workout['title'])
-            st.text(f"{workout['channel']} - {get_duration_text(workout['duration'])}")
-            url = f"https://www.youtube.com/watch?v={workout['video_id']}"
-            st.video(url)
-elif selection == "All Workouts":
-    st.header("All Workouts")
-    workouts = get_workouts()
-    for workout in workouts:
-        url = f"https://www.youtube.com/watch?v={workout['video_id']}"
-        st.text(workout['title'])
-        st.text(f"{workout['channel']} - {get_duration_text(workout['duration'])}")
-        st.video(url)
-        if st.button("Delete Workout", key=f"delete_{workout['video_id']}"):
-            dbs.delete_workout(workout['video_id'])
-            st.cache_data.clear()
-            st.experimental_rerun()
-else:
-    st.header("Add Workout")
-    if "video_info_preview" not in st.session_state:
-        st.session_state.video_info_preview = None
-    video_url = st.text_input(
-        "Enter YouTube Video URL",
-        key="video_url_input",
-        on_change=fetch_video_info
-    )
-    if st.session_state.video_info_preview:
-        preview = st.session_state.video_info_preview
-        st.text(preview['title'])
-        st.text(f"{preview['channel']} - {get_duration_text(preview['duration'])}")
-        st.video(f"https://www.youtube.com/watch?v={preview['video_id']}")
-        if st.button("Add Workout to Database"):
-            if not dbs.workout_exists(preview['video_id']):
-                dbs.insert_workout(preview)
-                st.cache_data.clear()
-                st.success("Workout added successfully!")
-                st.experimental_rerun()  
+            # Use workout_exists() from your database_service
+            if workout_exists(exercise.strip()):
+                st.error(f"Exercise '{exercise}' already exists.")
             else:
-                st.warning("This workout already exists in the database!")   
+                insert_workout({
+                    "exercise": exercise.strip(),
+                    "sets": sets,
+                    "reps": reps,
+                    "weight": weight if weight > 0 else None,
+                    "weight_unit": unit if weight > 0 else None
+                })
+                st.success(f"Exercise '{exercise}' added!")
 
+# ---------------- View Workouts ----------------
+elif choice == "View Workouts":
+    st.subheader("All Workouts")
+    workouts = get_all_workouts()
+    if workouts:
+        # Table headers
+        col_ex, col_sets, col_reps, col_weight, col_update, col_delete = st.columns([3,1,1,2,1.5,1.5])
+        col_ex.markdown("**Exercise**")
+        col_sets.markdown("**Sets**")
+        col_reps.markdown("**Reps**")
+        col_weight.markdown("**Weight**")
 
+        for w in workouts:
+            # Display workout row
+            col_ex, col_sets, col_reps, col_weight, col_update, col_delete = st.columns([3,1,1,2,1.5,1.5])
+            col_ex.write(w.exercise)
+            col_sets.write(str(w.sets))
+            col_reps.write(str(w.reps))
+            col_weight.write(f"{w.weight:.1f} {w.weight_unit}" if w.weight else "Bodyweight")
+
+            # Update button
+            if col_update.button("Update", key=f"edit_{w.id}"):
+                st.session_state.edit_id = w.id
+
+            # Delete button
+            if col_delete.button("Delete", key=f"delete_{w.id}"):
+                delete_workout(w.id)
+                st.rerun()
+
+            # Inline edit form for this row
+            if st.session_state.edit_id == w.id:
+                st.markdown("---")  # optional separator
+
+                # Exercise name
+                exercise = st.text_input("Exercise", value=w.exercise, key=f"exercise_{w.id}")
+
+                # Sets | Reps | Weight | Unit in one row
+                col_sets, col_reps, col_weight, col_unit, col_submit = st.columns([1,1,2,1,1])
+                sets = col_sets.number_input("Sets", min_value=1, step=1, value=w.sets, key=f"sets_{w.id}")
+                reps = col_reps.number_input("Reps", min_value=1, step=1, value=w.reps, key=f"reps_{w.id}")
+                weight = col_weight.number_input("Weight", min_value=0.0, step=0.5, format="%.1f",
+                                                value=w.weight if w.weight else 0.0, key=f"weight_{w.id}")
+                unit = col_unit.selectbox("", ["lbs", "kg"], index=0 if w.weight_unit=="lbs" else 1, key=f"unit_{w.id}")
+
+                col_submit.write("")        
+                col_submit.write("")
+
+                if col_submit.button("Submit", key=f"submit_{w.id}"):
+                    update_workout(w.id, {
+                        "exercise": exercise,
+                        "sets": sets,
+                        "reps": reps,
+                        "weight": weight if weight > 0 else None,
+                        "weight_unit": unit if weight > 0 else None
+                    })
+                    st.session_state.edit_id = None
+                    st.rerun()
+
+    else:
+        st.info("No workouts logged yet.")

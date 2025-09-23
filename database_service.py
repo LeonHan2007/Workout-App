@@ -1,41 +1,50 @@
-import harperdb
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, MetaData
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import datetime
 
-url = "your-db-url-here"
-username = "your-user"
-password = "your-password"
-db = harperdb.HarperDB(url=url, username=username, password=password)
+engine = create_engine("sqlite:///workouts.db")  # change to your DB
+Session = sessionmaker(bind=engine)
+session = Session()
+Base = declarative_base()
 
-SCHEMA = "workout_repo"
-TABLE = "workouts"
-TABLE_TODAY = "workout_today"
+class Workout(Base):
+    __tablename__ = "workouts"
+    id = Column(Integer, primary_key=True)
+    exercise = Column(String, nullable=False)
+    sets = Column(Integer, nullable=False)
+    reps = Column(Integer, nullable=False)
+    weight = Column(Float, nullable=True)          
+    weight_unit = Column(String, nullable=True)    
+    workout_date = Column(Date, default=datetime.date.today)
 
-def insert_workout(workout_data):
-    res = db.insert(SCHEMA, TABLE, [workout_data])
-    return res
+Base.metadata.create_all(engine)
 
-def delete_workout(video_id):
-    res = db.delete(SCHEMA, TABLE, [video_id])
-    return res
+# CRUD functions
+def insert_workout(data):
+    w = Workout(**data)
+    session.add(w)
+    session.commit()
+    return w
 
 def get_all_workouts():
-    res = db.sql(f"SELECT video_id, channel, title, duration FROM {SCHEMA}.{TABLE}")
-    return res
+    return session.query(Workout).order_by(Workout.id).all()
 
-def get_workout_today():
-    res = db.sql(f"SELECT * FROM {SCHEMA}.{TABLE_TODAY} LIMIT 1")
-    return res
+def update_workout(workout_id, data):
+    w = session.query(Workout).filter_by(id=workout_id).first()
+    for key, val in data.items():
+        setattr(w, key, val)
+    session.commit()
+    return w
 
-def update_workout_today(workout_today, insert=True):
-    existing = get_workout_today() 
-    if existing:
-        workout_today['video_id'] = existing[0]['video_id']
-        res = db.update(SCHEMA, TABLE_TODAY, [workout_today])
-    else:
-        res = db.insert(SCHEMA, TABLE_TODAY, [workout_today])
-    
-    return res
+def delete_workout(workout_id):
+    w = session.query(Workout).filter_by(id=workout_id).first()
+    if w:
+        session.delete(w)
+        session.commit()
 
-def workout_exists(video_id):
-    res = db.sql(f"SELECT video_id FROM {SCHEMA}.{TABLE} WHERE video_id = '{video_id}'")
-    return len(res) > 0
-
+def workout_exists(exercise):
+    query = session.query(Workout).filter_by(
+        exercise=exercise,
+    )
+    return session.query(query.exists()).scalar()
