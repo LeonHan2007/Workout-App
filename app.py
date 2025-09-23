@@ -8,6 +8,22 @@ if "refresh" not in st.session_state:
 if "edit_id" not in st.session_state:
     st.session_state.edit_id = None
 
+if "screen_width" not in st.session_state:
+    st.session_state.screen_width = 1200  # default desktop width
+
+    st.markdown(
+        """
+        <script>
+        const width = window.innerWidth;
+        fetch("/", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({screen_width: width})
+        });
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 # Sidebar menu
@@ -49,58 +65,78 @@ elif choice == "View Workouts":
     st.subheader("All Workouts")
     workouts = get_all_workouts()
     if workouts:
-        # Table headers
-        col_ex, col_sets, col_reps, col_weight, col_update, col_delete = st.columns([3,1,1,2,1.5,1.5])
-        col_ex.markdown("**Exercise**")
-        col_sets.markdown("**Sets**")
-        col_reps.markdown("**Reps**")
-        col_weight.markdown("**Weight**")
+        is_mobile = st.session_state.screen_width < 600
+        if is_mobile:
+            for w in workouts:
+                with st.container():
+                    st.write(f"**{w.exercise}**")
+                    st.write(f"Sets: {w.sets}, Reps: {w.reps}")
+                    st.write(f"Weight: {f'{w.weight:.1f} {w.weight_unit}' if w.weight else 'Bodyweight'}")
 
-        for w in workouts:
-            # Display workout row
+                    col1, col2 = st.columns(2)
+                    if col1.button("Update", key=f"edit_{w.id}"):
+                        st.session_state.edit_id = w.id
+                    if col2.button("Delete", key=f"delete_{w.id}"):
+                        delete_workout(w.id)
+                        st.rerun()
+        else:
+
+            # Table headers
             col_ex, col_sets, col_reps, col_weight, col_update, col_delete = st.columns([3,1,1,2,1.5,1.5])
-            col_ex.write(w.exercise)
-            col_sets.write(str(w.sets))
-            col_reps.write(str(w.reps))
-            col_weight.write(f"{w.weight:.1f} {w.weight_unit}" if w.weight else "Bodyweight")
+            col_ex.markdown("**Exercise**")
+            col_sets.markdown("**Sets**")
+            col_reps.markdown("**Reps**")
+            col_weight.markdown("**Weight**")
 
-            # Update button
-            if col_update.button("Update", key=f"edit_{w.id}"):
-                st.session_state.edit_id = w.id
+            for w in workouts:
+                # Display workout row
+                col_ex, col_sets, col_reps, col_weight, col_update, col_delete = st.columns([3,1,1,2,1.5,1.5])
+                col_ex.write(w.exercise)
+                col_sets.write(str(w.sets))
+                col_reps.write(str(w.reps))
+                col_weight.write(f"{w.weight:.1f} {w.weight_unit}" if w.weight else "Bodyweight")
 
-            # Delete button
-            if col_delete.button("Delete", key=f"delete_{w.id}"):
-                delete_workout(w.id)
-                st.rerun()
-
-            # Inline edit form for this row
-            if st.session_state.edit_id == w.id:
-                st.markdown("---")  # optional separator
-
-                # Exercise name
-                exercise = st.text_input("Exercise", value=w.exercise, key=f"exercise_{w.id}")
-
-                # Sets | Reps | Weight | Unit in one row
-                col_sets, col_reps, col_weight, col_unit, col_submit = st.columns([1,1,2,1,1])
-                sets = col_sets.number_input("Sets", min_value=1, step=1, value=w.sets, key=f"sets_{w.id}")
-                reps = col_reps.number_input("Reps", min_value=1, step=1, value=w.reps, key=f"reps_{w.id}")
-                weight = col_weight.number_input("Weight", min_value=0.0, step=0.5, format="%.1f",
-                                                value=w.weight if w.weight else 0.0, key=f"weight_{w.id}")
-                unit = col_unit.selectbox("", ["lbs", "kg"], index=0 if w.weight_unit=="lbs" else 1, key=f"unit_{w.id}")
-
-                col_submit.write("")        
-                col_submit.write("")
-
-                if col_submit.button("Submit", key=f"submit_{w.id}"):
-                    update_workout(w.id, {
-                        "exercise": exercise,
-                        "sets": sets,
-                        "reps": reps,
-                        "weight": weight if weight > 0 else None,
-                        "weight_unit": unit if weight > 0 else None
-                    })
-                    st.session_state.edit_id = None
+                # Update button
+                update_clicked = col_update.button("Update", key=f"update_{w.id}")
+                if update_clicked:
+                    if st.session_state.get("edit_id") == w.id:
+                        st.session_state.edit_id = None
+                    else:
+                        st.session_state.edit_id = w.id
                     st.rerun()
+
+                # Delete button
+                if col_delete.button("Delete", key=f"delete_{w.id}"):  
+                    delete_workout(w.id)
+                    st.rerun()
+
+                # Inline edit form for this row
+                if st.session_state.edit_id == w.id:
+                    st.markdown("---")  # optional separator
+
+                    # Exercise name
+                    exercise = st.text_input("Exercise", value=w.exercise, key=f"exercise_{w.id}")
+
+                    # Sets | Reps | Weight | Unit in one row
+                    col_sets, col_reps, col_weight, col_unit, col_submit = st.columns([1,1,2,1,1])
+                    sets = col_sets.number_input("Sets", min_value=1, step=1, value=w.sets, key=f"sets_{w.id}")
+                    reps = col_reps.number_input("Reps", min_value=1, step=1, value=w.reps, key=f"reps_{w.id}")
+                    weight = col_weight.number_input("Weight", min_value=0.0, step=0.5, format="%.1f", value=w.weight if w.weight else 0.0, key=f"weight_{w.id}")
+                    unit = col_unit.selectbox("", ["lbs", "kg"], index=0 if w.weight_unit=="lbs" else 1, key=f"unit_{w.id}")
+
+                    col_submit.write("")        
+                    col_submit.write("")
+
+                    if col_submit.button("Confirm", key=f"submit_{w.id}"):
+                        update_workout(w.id, {
+                            "exercise": exercise,
+                            "sets": sets,
+                            "reps": reps,
+                            "weight": weight if weight > 0 else None,
+                            "weight_unit": unit if weight > 0 else None
+                        })
+                        st.session_state.edit_id = None
+                        st.rerun()
 
     else:
         st.info("No workouts logged yet.")
