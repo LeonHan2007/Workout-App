@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_dimensions import st_dimensions
 from database_service import insert_workout, get_all_workouts, update_workout, delete_workout, workout_exists
 
 st.title("Workout Tracker")
@@ -9,21 +10,11 @@ if "edit_id" not in st.session_state:
     st.session_state.edit_id = None
 
 if "screen_width" not in st.session_state:
-    st.session_state.screen_width = 1200  # default desktop width
+    st.session_state.screen_width = 1200
 
-    st.markdown(
-        """
-        <script>
-        const width = window.innerWidth;
-        fetch("/", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({screen_width: width})
-        });
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+dims = st_dimensions()
+st.session_state.screen_width = dims["width"] if dims else 1200
+is_mobile = st.session_state.screen_width < 600 
 
 
 # Sidebar menu
@@ -69,16 +60,19 @@ elif choice == "View Workouts":
         if is_mobile:
             for w in workouts:
                 with st.container():
-                    st.write(f"**{w.exercise}**")
-                    st.write(f"Sets: {w.sets}, Reps: {w.reps}")
-                    st.write(f"Weight: {f'{w.weight:.1f} {w.weight_unit}' if w.weight else 'Bodyweight'}")
+                    st.markdown(f"### {w.exercise}")
+                    st.write(f"**Sets:** {w.sets}")
+                    st.write(f"**Reps:** {w.reps}")
+                    st.write(f"**Weight:** {f'{w.weight:.1f} {w.weight_unit}' if w.weight else 'Bodyweight'}")
 
                     col1, col2 = st.columns(2)
-                    if col1.button("Update", key=f"edit_{w.id}"):
+                    if col1.button("Update", key=f"update_mobile_{w.id}"):
                         st.session_state.edit_id = w.id
-                    if col2.button("Delete", key=f"delete_{w.id}"):
+                    if col2.button("Delete", key=f"delete_mobile_{w.id}"):
                         delete_workout(w.id)
-                        st.rerun()
+                        st.experimental_rerun()
+
+                    st.markdown("---")
         else:
 
             # Table headers
