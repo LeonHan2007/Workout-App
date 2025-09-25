@@ -6,4 +6,5 @@ A simple Python app to add and view workouts.
 - Add, view, and manage custon workouts
 - Store data in a database using SQL
 - Hosted online with Streamlit
+- User accounts and authentication
 - Mobile compatibility
