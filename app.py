@@ -2,15 +2,6 @@ import streamlit as st
 from streamlit_dimensions import st_dimensions
 from database_service import Base, engine, create_user, existing_user, authenticate_user, insert_workout, get_all_workouts, update_workout, delete_workout, workout_exists
 
-try:
-    conn = engine.connect()
-    print("Connected to RDS PostgreSQL successfully!")
-    
-    conn.close()
-except Exception as e:
-    print("Connection failed:", e)
-    st.stop()
-Base.metadata.create_all(engine)
 st.title("SkibFit")
 
 if "user" not in st.session_state:
@@ -33,13 +24,18 @@ def login():
     password = st.text_input("Password", type="password", key="login_password")
 
     if st.button("Login"):
-        user = authenticate_user(username.strip(), password)
-        if user:
-            st.session_state.user = user
-            st.success(f"Welcome back, {user.username}!")
-            st.rerun()
+        if not username.strip():
+            st.warning("Please enter a username.")
+        elif not password:
+            st.warning("Please enter a password.")
         else:
-            st.error("Invalid username or password.")
+            user = authenticate_user(username.strip(), password)
+            if user:
+                st.session_state.user = user
+                st.success(f"Welcome back, {user.username}!")
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
 
 def signup():
     st.subheader("Sign Up")
@@ -68,7 +64,7 @@ def logout():
     st.session_state.user = None
     st.experimental_rerun()
 
-# If user not logged in, show login/signup forms and stop further execution
+
 if st.session_state.user is None:
     login()
     st.markdown("---")
@@ -79,7 +75,7 @@ st.sidebar.write(f"Logged in as: **{st.session_state.user.username}**")
 if st.sidebar.button("Logout"):
     logout()
 
-# Sidebar menu
+
 menu = ["View Workouts", "Add New Workout"]
 choice = st.sidebar.selectbox("Menu", menu)
 

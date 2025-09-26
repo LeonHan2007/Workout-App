@@ -1,0 +1,19 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv311/
+
+# Environment files
+.env
+.env.*
+.envrc
+
+# Dev container files (if using VS Code)
+.devcontainer/
+
+# OS files
+.DS_Store
