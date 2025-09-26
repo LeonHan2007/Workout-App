@@ -13,9 +13,12 @@ DB_PASSWORD = st.secrets["DB_PASSWORD"]
 
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-engine = create_engine(DATABASE_URL, echo=True)
+@st.cache_resource
+def get_engine():
+    return create_engine(DATABASE_URL, echo=True)
+
+engine = get_engine()
 Session = sessionmaker(bind=engine)
-session = Session()
 Base = declarative_base()
 
 
@@ -51,49 +54,81 @@ class Workout(Base):
 
 # CRUD
 def create_user(username: str, email: str, password: str):
-    if existing_user(username, email):
-        return None
-    user = User(username=username, email=email, hashed_password=hash_password(password))
-    session.add(user)
-    session.commit()
-    return user
+    session = Session()
+    try:
+        if session.query(User).filter((User.username == username) | (User.email == email)).first():
+            return None
+        user = User(username=username, email=email, hashed_password=hash_password(password))
+        session.add(user)
+        session.commit()
+        return user
+    finally:
+        session.close()
 
 def existing_user(username: str, email: str) -> bool:
-    return session.query(User).filter((User.username == username) | (User.email == email)).first() is not None
+    session = Session()
+    try:
+        return session.query(User).filter((User.username == username) | (User.email == email)).first() is not None
+    finally:
+        session.close()
 
 def authenticate_user(username: str, password: str):
-    user = session.query(User).filter_by(username=username).first()
-    if user and verify_password(password, user.hashed_password):
-        return user
+    session = Session()
+    try:
+        user = session.query(User).filter_by(username=username).first()
+        if user and verify_password(password, user.hashed_password):
+            return user
+    finally:
+        session.close()
     return None
 
 def insert_workout(user_id: int, data: dict):
-    w = Workout(user_id=user_id, **data)
-    session.add(w)
-    session.commit()
-    return w
+    session = Session()
+    try:
+        w = Workout(user_id=user_id, **data)
+        session.add(w)
+        session.commit()
+        return w
+    finally:
+        session.close()
 
 def get_all_workouts(user_id: int):
-    return session.query(Workout).filter_by(user_id=user_id).order_by(Workout.id).all()
+    session = Session()
+    try:
+        return session.query(Workout).filter_by(user_id=user_id).order_by(Workout.id).all()
+    finally:
+        session.close()
 
 def update_workout(user_id: int, workout_id: int, data: dict):
-    w = session.query(Workout).filter_by(id=workout_id, user_id=user_id).first()
-    if not w:
-        return None
-    for key, val in data.items():
-        setattr(w, key, val)
-    session.commit()
-    return w
+    session = Session()
+    try:
+        w = session.query(Workout).filter_by(id=workout_id, user_id=user_id).first()
+        if not w:
+            return None
+        for key, val in data.items():
+            setattr(w, key, val)
+        session.commit()
+        return w
+    finally:
+        session.close()
 
 def delete_workout(user_id: int, workout_id: int):
-    w = session.query(Workout).filter_by(id=workout_id, user_id=user_id).first()
-    if w:
-        session.delete(w)
-        session.commit()
-        return True
-    return False
+    session = Session()
+    try:
+        w = session.query(Workout).filter_by(id=workout_id, user_id=user_id).first()
+        if w:
+            session.delete(w)
+            session.commit()
+            return True
+        return False
+    finally:
+        session.close()
 
 def workout_exists(user_id: int, exercise: str) -> bool:
-    query = session.query(Workout).filter_by(user_id=user_id, exercise=exercise)
-    return session.query(query.exists()).scalar()
+    session = Session()
+    try:
+        query = session.query(Workout).filter_by(user_id=user_id, exercise=exercise)
+        return session.query(query.exists()).scalar()
+    finally:
+        session.close()
 
