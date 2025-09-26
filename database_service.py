@@ -1,28 +1,24 @@
-import os
+import streamlit as st
 import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from passlib.context import CryptContext
-from dotenv import load_dotenv
 
-# ---------------- Load environment ----------------
-load_dotenv()
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = st.secrets["DB_HOST"]
+DB_PORT = st.secrets["DB_PORT"]
+DB_NAME = st.secrets["DB_NAME"]
+DB_USER = st.secrets["DB_USER"]
+DB_PASSWORD = st.secrets["DB_PASSWORD"]
 
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# ---------------- SQLAlchemy setup ----------------
 engine = create_engine(DATABASE_URL, echo=True)
 Session = sessionmaker(bind=engine)
 session = Session()
 Base = declarative_base()
 
-# ---------------- Password hashing ----------------
+
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 def hash_password(password: str) -> str:
@@ -31,7 +27,6 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
-# ---------------- Models ----------------
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
@@ -54,7 +49,7 @@ class Workout(Base):
 
     user = relationship("User", back_populates="workouts")
 
-# ---------------- CRUD ----------------
+# CRUD
 def create_user(username: str, email: str, password: str):
     if existing_user(username, email):
         return None
@@ -102,8 +97,3 @@ def workout_exists(user_id: int, exercise: str) -> bool:
     query = session.query(Workout).filter_by(user_id=user_id, exercise=exercise)
     return session.query(query.exists()).scalar()
 
-# ---------------- Utility ----------------
-def reset_users_table():
-    """Drops and recreates all tables"""
-    Base.metadata.drop_all(engine)  # drops all tables
-    Base.metadata.create_all(engine)  # recreates all tables

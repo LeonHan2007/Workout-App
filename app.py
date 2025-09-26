@@ -62,7 +62,7 @@ def signup():
 
 def logout():
     st.session_state.user = None
-    st.experimental_rerun()
+    st.rerun()
 
 
 if st.session_state.user is None:
@@ -130,7 +130,7 @@ elif choice == "View Workouts":
                         st.session_state.edit_id = w.id
                     if col2.button("Delete", key=f"delete_mobile_{w.id}"):
                         delete_workout(w.id, user_id)
-                        st.experimental_rerun()
+                        st.rerun()
 
                     st.markdown("---")
         else:
@@ -180,7 +180,6 @@ elif choice == "View Workouts":
 
                     col_submit.write("")        
                     col_submit.write("")
-
                     if col_submit.button("Confirm", key=f"submit_{w.id}"):
                         update_workout(user_id, w.id, {
                             "exercise": exercise,
