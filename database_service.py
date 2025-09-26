@@ -3,8 +3,18 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 import datetime
 from passlib.context import CryptContext
+import os
+from dotenv import load_dotenv
 
-engine = create_engine("sqlite:///workouts.db")  
+load_dotenv()
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 session = Session()
 Base = declarative_base()
@@ -76,6 +86,8 @@ def get_all_workouts(user_id):
 
 def update_workout(user_id, workout_id, data):
     w = session.query(Workout).filter_by(id=workout_id, user_id=user_id).first()
+    if not w:
+        return None
     for key, val in data.items():
         setattr(w, key, val)
     session.commit()
@@ -86,6 +98,8 @@ def delete_workout(user_id, workout_id):
     if w:
         session.delete(w)
         session.commit()
+        return True
+    return False
 
 def workout_exists(user_id, exercise):
     query = session.query(Workout).filter_by(

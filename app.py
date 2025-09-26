@@ -2,7 +2,16 @@ import streamlit as st
 from streamlit_dimensions import st_dimensions
 from database_service import Base, engine, create_user, existing_user, authenticate_user, insert_workout, get_all_workouts, update_workout, delete_workout, workout_exists
 
-st.title("SkibidiFit")
+try:
+    conn = engine.connect()
+    print("Connected to RDS PostgreSQL successfully!")
+    
+    conn.close()
+except Exception as e:
+    print("Connection failed:", e)
+    st.stop()
+Base.metadata.create_all(engine)
+st.title("SkibFit")
 
 if "user" not in st.session_state:
     st.session_state.user = None
