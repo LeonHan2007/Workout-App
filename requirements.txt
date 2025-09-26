@@ -39,6 +39,6 @@ tzdata==2025.2
 urllib3==2.5.0
 yt-dlp==2025.9.5
 python-dotenv==1.0.0
-psycopg2-binary
+psycopg2-binary==2.9.5
 passlib[argon2]==1.7.4
 argon2-cffi==23.1.0

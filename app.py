@@ -125,7 +125,7 @@ elif choice == "View Workouts":
                     st.write(f"**Reps:** {w.reps}")
                     st.write(f"**Weight:** {f'{w.weight:.1f} {w.weight_unit}' if w.weight else 'Bodyweight'}")
 
-                    col1, col2 = st.columns(2)
+                    col1, col2 = st.columns(2) 
                     if col1.button("Update", key=f"update_mobile_{w.id}"):
                         st.session_state.edit_id = w.id
                     if col2.button("Delete", key=f"delete_mobile_{w.id}"):
