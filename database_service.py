@@ -10,18 +10,23 @@ DB_PORT = st.secrets["DB_PORT"]
 DB_NAME = st.secrets["DB_NAME"]
 DB_USER = st.secrets["DB_USER"]
 DB_PASSWORD = st.secrets["DB_PASSWORD"]
-st.write(f"DEBUG - HOST: '{DB_HOST}' PORT: '{DB_PORT}'")
 
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{int(DB_PORT)}/{DB_NAME}?sslmode=require"
 
 @st.cache_resource
 def get_engine():
-    return create_engine(DATABASE_URL, echo=True)
+    return create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,       # test connection before using it
+        pool_recycle=300,          # recycle connections every 5 min
+        connect_args={"connect_timeout": 10},
+    )
 
 engine = get_engine()
-Session = sessionmaker(bind=engine)
+# expire_on_commit=False prevents DetachedInstanceError when accessing
+# ORM objects after their session has been closed
+Session = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
-
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -31,6 +36,7 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
@@ -39,6 +45,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
 
     workouts = relationship("Workout", back_populates="user", cascade="all, delete-orphan")
+
 
 class Workout(Base):
     __tablename__ = "workouts"
@@ -53,25 +60,46 @@ class Workout(Base):
 
     user = relationship("User", back_populates="workouts")
 
+
+Base.metadata.create_all(engine)
+
+
 # CRUD
+
 def create_user(username: str, email: str, password: str):
     session = Session()
     try:
-        if session.query(User).filter((User.username == username) | (User.email == email)).first():
+        if session.query(User).filter(
+            (User.username == username) | (User.email == email)
+        ).first():
             return None
-        user = User(username=username, email=email, hashed_password=hash_password(password))
+        user = User(
+            username=username,
+            email=email,
+            hashed_password=hash_password(password),
+        )
         session.add(user)
         session.commit()
         return user
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
+
 
 def existing_user(username: str, email: str) -> bool:
     session = Session()
     try:
-        return session.query(User).filter((User.username == username) | (User.email == email)).first() is not None
+        return (
+            session.query(User)
+            .filter((User.username == username) | (User.email == email))
+            .first()
+            is not None
+        )
     finally:
         session.close()
+
 
 def authenticate_user(username: str, password: str):
     session = Session()
@@ -79,9 +107,10 @@ def authenticate_user(username: str, password: str):
         user = session.query(User).filter_by(username=username).first()
         if user and verify_password(password, user.hashed_password):
             return user
+        return None
     finally:
         session.close()
-    return None
+
 
 def insert_workout(user_id: int, data: dict):
     session = Session()
@@ -90,15 +119,25 @@ def insert_workout(user_id: int, data: dict):
         session.add(w)
         session.commit()
         return w
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
+
 
 def get_all_workouts(user_id: int):
     session = Session()
     try:
-        return session.query(Workout).filter_by(user_id=user_id).order_by(Workout.id).all()
+        return (
+            session.query(Workout)
+            .filter_by(user_id=user_id)
+            .order_by(Workout.id)
+            .all()
+        )
     finally:
         session.close()
+
 
 def update_workout(user_id: int, workout_id: int, data: dict):
     session = Session()
@@ -110,8 +149,12 @@ def update_workout(user_id: int, workout_id: int, data: dict):
             setattr(w, key, val)
         session.commit()
         return w
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
+
 
 def delete_workout(user_id: int, workout_id: int):
     session = Session()
@@ -122,14 +165,18 @@ def delete_workout(user_id: int, workout_id: int):
             session.commit()
             return True
         return False
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
+
 
 def workout_exists(user_id: int, exercise: str) -> bool:
     session = Session()
     try:
-        query = session.query(Workout).filter_by(user_id=user_id, exercise=exercise)
-        return session.query(query.exists()).scalar()
+        return session.query(
+            session.query(Workout).filter_by(user_id=user_id, exercise=exercise).exists()
+        ).scalar()
     finally:
         session.close()
-
