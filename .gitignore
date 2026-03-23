@@ -17,3 +17,6 @@ venv311/
 
 # OS files
 .DS_Store
+
+.streamlit/secrets.toml
+.streamlit/secrets.toml
