@@ -31,3 +31,8 @@ mdurl==0.1.2
 
 # Web requests
 requests==2.32.5
+
+google-auth
+google-auth-oauthlib
+google-api-python-client
+groq
