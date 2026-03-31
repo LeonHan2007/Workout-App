@@ -165,18 +165,27 @@ def generate_workout_plan(
     workout_days: int,
     workouts: list,
     split: dict[str, list],
+    preferred_time: str = "Evening (17:00–20:00)",
 ) -> list[dict]:
     """Call the LLM and return a parsed list of workout session dicts."""
     today      = datetime.date.today()
-    week_dates = [
+    date_range = [
         (today + datetime.timedelta(days=i)).strftime("%A %Y-%m-%d")
-        for i in range(7)
+        for i in range(60)
     ]
+
+    # Map the human-readable preference to a concrete time window for the prompt
+    _time_windows = {
+        "Morning (6:00–9:00)":     "06:00–09:00",
+        "Afternoon (12:00–15:00)": "12:00–15:00",
+        "Evening (17:00–20:00)":   "17:00–20:00",
+    }
+    preferred_window = _time_windows.get(preferred_time, "17:00–20:00")
 
     prompt = f"""You are a fitness scheduling assistant. Your job is to pick dates and times for a pre-determined push/pull/legs workout split.
 
 Today is {today.strftime("%A %Y-%m-%d")}.
-The next 7 days are: {", ".join(week_dates)}.
+Available dates: {", ".join(date_range)}.
 
 The user's existing calendar events (do NOT schedule workouts during these times):
 {_format_events_for_prompt(events)}
@@ -188,7 +197,7 @@ Rules:
 - Schedule exactly {workout_days} sessions, one per split day listed above, in order.
 - Pick the {workout_days} days with the most free time, avoiding event conflicts.
 - Each session is 60 minutes; set end_time = start_time + 60 min.
-- Prefer morning (07:00–09:00) or evening (17:00–19:00) slots when free.
+- STRONGLY prefer the user's preferred time window: {preferred_window}. Only deviate if there is a direct conflict.
 - The "description" field must list every exercise exactly as given, one per line,
   in the format: "Exercise name: X sets x Y reps" (add weight if present).
 - Return ONLY a raw JSON array — no markdown, no explanation, no code fences:
@@ -257,16 +266,20 @@ def _plan_section(workouts: list):
         st.rerun()
 
     st.markdown("---")
-    workout_days = st.slider("Days per week to work out", 1, 7, 3)
-    days_ahead   = st.selectbox(
-        "Schedule how far ahead?", [7, 14],
+    days_ahead = st.selectbox(
+        "Schedule how far ahead?", [7, 14, 30, 60],
         format_func=lambda x: f"{x} days",
     )
 
-    # Build and preview the PPL split before the user generates a plan
-    split = build_ppl_split(workouts, workout_days)
-    _render_split_preview(split)
+    preferred_time = st.selectbox(
+        "When do you prefer to work out?",
+        ["Morning (6:00–9:00)", "Afternoon (12:00–15:00)", "Evening (17:00–20:00)"],
+    )
 
+    # Derive workout_days from the number of distinct plan days; default to 3
+    distinct_days = len(set(w.plan_day for w in workouts if w.plan_day)) or 3
+    split = build_ppl_split(workouts, distinct_days)
+    workout_days = len(split)
     if st.button("Generate Workout Schedule"):
         with st.spinner("Fetching your calendar events..."):
             try:
@@ -277,7 +290,7 @@ def _plan_section(workouts: list):
 
         with st.spinner("AI is scheduling your sessions..."):
             try:
-                plan = generate_workout_plan(events, workout_days, workouts, split)
+                plan = generate_workout_plan(events, workout_days, workouts, split, preferred_time)
             except json.JSONDecodeError:
                 st.error("The AI returned an unexpected format. Please try again.")
                 return
@@ -291,28 +304,104 @@ def _plan_section(workouts: list):
     _render_plan()
 
 
-def _render_split_preview(split: dict[str, list]):
-    """Show the user how their exercises were classified before generating."""
-    st.markdown("#### Push/Pull/Legs split")
-    cols = st.columns(len(split))
-    for col, (day_label, exercises) in zip(cols, split.items()):
-        col.markdown(f"**{day_label}**")
-        if exercises:
-            for w in exercises:
-                col.write(f"• {w.exercise}")
-        else:
-            col.caption("No exercises classified here yet.")
+
+def _color_for_title(title: str) -> str:
+    t = title.lower()
+    if "push" in t:  return "#ef4444"   # red
+    if "pull" in t:  return "#3b82f6"   # blue
+    if "leg"  in t:  return "#22c55e"   # green
+    return "#a855f7"                     # purple fallback
 
 
 def _render_plan():
-    """Display the cached plan and let the user push it to Google Calendar."""
+    """Display the cached plan as a visual weekly calendar grid."""
     plan = st.session_state.get("workout_plan")
     if not plan:
         return
 
-    st.markdown("### Your Workout Plan")
+    st.markdown("### Your Workout Schedule")
+
+    # ── Group sessions by week ────────────────────────────────────────
+    from collections import defaultdict
+    import math
+
+    weeks: dict[int, list] = defaultdict(list)
+    first_date = datetime.date.fromisoformat(plan[0]["date"])
     for session in plan:
-        label = f"{session['title']} — {session['date']} at {session['start_time']}"
+        d = datetime.date.fromisoformat(session["date"])
+        week_num = (d - first_date).days // 7
+        weeks[week_num].append(session)
+
+    DAY_LABELS  = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    for week_num in sorted(weeks.keys()):
+        sessions_in_week = weeks[week_num]
+
+        # Build a Mon-indexed week grid anchored to the first session of this week
+        anchor = datetime.date.fromisoformat(sessions_in_week[0]["date"])
+        week_monday = anchor - datetime.timedelta(days=anchor.weekday())
+
+        # Map weekday index → session (0=Mon … 6=Sun)
+        day_map: dict[int, dict] = {}
+        for sess in sessions_in_week:
+            d = datetime.date.fromisoformat(sess["date"])
+            day_map[d.weekday()] = sess
+
+        week_label = f"Week of {week_monday.strftime('%B %d')}"
+        st.markdown(f"**{week_label}**")
+
+        cols = st.columns(7)
+        for i, (col, day_label) in enumerate(zip(cols, DAY_LABELS)):
+            date_for_col = week_monday + datetime.timedelta(days=i)
+            sess = day_map.get(i)
+
+            if sess:
+                color = _color_for_title(sess["title"])
+                session_type = sess["title"].replace("SkibFit — ", "").replace("SkibFit - ", "")
+                col.markdown(
+                    f"""<div style="background:{color};border-radius:8px;padding:6px 4px;text-align:center;color:white;">
+                    <div style="font-size:0.65rem;opacity:0.85;">{day_label}</div>
+                    <div style="font-size:0.7rem;font-weight:700;">{date_for_col.day}</div>
+                    <div style="font-size:0.6rem;margin-top:2px;">{session_type}</div>
+                    <div style="font-size:0.55rem;opacity:0.85;">{sess["start_time"]}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+            else:
+                is_today = date_for_col == datetime.date.today()
+                border = "2px solid #6366f1" if is_today else "1px solid #e5e7eb"
+                bg = "#f0f0ff" if is_today else "#f9fafb"
+                col.markdown(
+                    f"""<div style="border:{border};background:{bg};border-radius:8px;padding:6px 4px;text-align:center;color:#9ca3af;">
+                    <div style="font-size:0.65rem;">{day_label}</div>
+                    <div style="font-size:0.7rem;font-weight:600;color:#374151;">{date_for_col.day}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("")  # spacer between weeks
+
+    # ── Legend ────────────────────────────────────────────────────────
+    st.markdown(
+        """<div style="display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 12px;">
+        <span style="display:flex;align-items:center;gap:4px;font-size:0.75rem;">
+            <span style="width:12px;height:12px;background:#ef4444;border-radius:3px;display:inline-block;"></span> Push
+        </span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:0.75rem;">
+            <span style="width:12px;height:12px;background:#3b82f6;border-radius:3px;display:inline-block;"></span> Pull
+        </span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:0.75rem;">
+            <span style="width:12px;height:12px;background:#22c55e;border-radius:3px;display:inline-block;"></span> Legs
+        </span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # ── Session detail expanders ──────────────────────────────────────
+    st.markdown("#### Session details")
+    for session in plan:
+        d = datetime.date.fromisoformat(session["date"])
+        label = f"{session['title']} — {d.strftime('%A, %b %d')} at {session['start_time']}"
         with st.expander(label):
             st.write(session["description"])
 
