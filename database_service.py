@@ -8,8 +8,7 @@ from sqlalchemy import (
     Column, Integer, String, Float, Date, DateTime, Boolean,
     ForeignKey, Text, create_engine, exists, func, desc,
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from urllib.parse import quote_plus
 
 # ─────────────────────────── connection ──────────────────────────────
@@ -33,11 +32,11 @@ def get_engine():
     )
 
 
-engine  = get_engine()
-# expire_on_commit=False prevents DetachedInstanceError when ORM objects
-# are accessed after their session has been closed.
-Session = sessionmaker(bind=engine, expire_on_commit=False)
-Base    = declarative_base()
+Base = declarative_base()
+
+
+def _get_session_factory():
+    return sessionmaker(bind=get_engine(), expire_on_commit=False)
 
 # ─────────────────────────── password hashing ────────────────────────
 
@@ -146,14 +145,18 @@ class WorkoutLog(Base):
     session = relationship("WorkoutSession", back_populates="logs")
 
 
-Base.metadata.create_all(engine)
-
 # ─────────────────────────── DB session context manager ──────────────
+
+def _ensure_tables():
+    """Create all tables on first use. Safe to call multiple times."""
+    Base.metadata.create_all(get_engine())
+
 
 @contextmanager
 def _session():
     """Yield a DB session and handle commit / rollback / close automatically."""
-    s = Session()
+    _ensure_tables()
+    s = _get_session_factory()()
     try:
         yield s
         s.commit()
