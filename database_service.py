@@ -147,10 +147,33 @@ class WorkoutLog(Base):
 
 # ─────────────────────────── DB session context manager ──────────────
 
+def _run_migrations(engine) -> None:
+    """
+    Idempotent column migrations for tables that already exist in production.
+    create_all() never alters existing tables, so new columns must be added here.
+    Each ALTER TABLE uses IF NOT EXISTS so it is safe to run on every startup.
+    """
+    from sqlalchemy import text
+    migrations = [
+        # workouts — columns added after initial deploy
+        "ALTER TABLE workouts ADD COLUMN IF NOT EXISTS plan_day VARCHAR",
+        "ALTER TABLE workouts ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0",
+        # workout_sessions — columns added after initial deploy
+        "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ppl_day VARCHAR",
+        "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
+    ]
+    with engine.begin() as conn:
+        for sql in migrations:
+            conn.execute(text(sql))
+
+
 @st.cache_resource
 def _ensure_tables():
-    """Create all tables exactly once per process (cached by Streamlit)."""
-    Base.metadata.create_all(get_engine())
+    """Create new tables and run column migrations, exactly once per process."""
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    _run_migrations(engine)
 
 
 @contextmanager
