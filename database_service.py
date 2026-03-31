@@ -147,8 +147,9 @@ class WorkoutLog(Base):
 
 # ─────────────────────────── DB session context manager ──────────────
 
+@st.cache_resource
 def _ensure_tables():
-    """Create all tables on first use. Safe to call multiple times."""
+    """Create all tables exactly once per process (cached by Streamlit)."""
     Base.metadata.create_all(get_engine())
 
 
@@ -184,6 +185,8 @@ def create_user(username: str, email: str, password: str) -> User | None:
             hashed_password=hash_password(password),
         )
         s.add(user)
+        s.flush()      # assign user.id before the session closes
+        s.refresh(user)
         return user
 
 
@@ -259,6 +262,8 @@ def start_session(
             notes=notes,
         )
         s.add(ws)
+        s.flush()      # assign ws.id before the session closes
+        s.refresh(ws)
         return ws
 
 
@@ -566,8 +571,8 @@ def get_dashboard_stats(user_id: int) -> DashboardStats:
         current_streak = _calculate_streak(all_dates, today)
 
         total_exercises = (
-            s.query(func.count(func.distinct(WorkoutLog.exercise)))
-            .filter_by(user_id=user_id)
+            s.query(func.count(WorkoutLog.exercise.distinct()))
+            .filter(WorkoutLog.user_id == user_id)
             .scalar() or 0
         )
 
