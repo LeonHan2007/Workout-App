@@ -1,8 +1,9 @@
 import datetime
 import streamlit as st
 from streamlit_dimensions import st_dimensions
+from streamlit_cookies_manager import EncryptedCookieManager
 from database_service import (
-    create_user, authenticate_user, insert_workout,
+    create_user, authenticate_user, get_user_by_id, insert_workout,
     get_all_workouts, update_workout, delete_workout, workout_exists,
     start_session, delete_session,
     log_exercises_bulk,
@@ -15,6 +16,15 @@ from plan import create_plan_page
 # ─────────────────────────── page config ────────────────────────────
 
 st.title("SkibFit")
+
+# ─────────────────────────── cookie manager ─────────────────────────
+
+_cookies = EncryptedCookieManager(
+    prefix="skibfit_",
+    password=st.secrets["COOKIE_SECRET"],
+)
+if not _cookies.ready():
+    st.stop()   # wait for the cookie manager JS to load
 
 # ─────────────────────────── session defaults ────────────────────────
 
@@ -30,6 +40,18 @@ def _init_session():
             st.session_state[key] = val
 
 _init_session()
+
+# Re-hydrate user from cookie if session_state was wiped by a refresh
+if st.session_state.user is None:
+    saved_id = _cookies.get("user_id")
+    if saved_id:
+        try:
+            user = get_user_by_id(int(saved_id))
+            if user:
+                st.session_state.user = user
+        except Exception:
+            _cookies["user_id"] = ""
+            _cookies.save()
 
 # ─────────────────────────── responsive layout ───────────────────────
 
@@ -68,6 +90,8 @@ def login_page():
             user = authenticate_user(username.strip(), password)
             if user:
                 st.session_state.user = user
+                _cookies["user_id"] = str(user.id)
+                _cookies.save()
                 st.success(f"Welcome back, {user.username}!")
                 st.rerun()
             else:
@@ -100,9 +124,10 @@ def signup_page():
 
 def logout():
     st.session_state.user = None
-    # Use .pop() so missing keys never raise KeyError
     st.session_state.pop("google_token", None)
     st.session_state.pop("workout_plan", None)
+    _cookies["user_id"] = ""
+    _cookies.save()
     st.rerun()
 
 # ─────────────────────────── auth gate ──────────────────────────────

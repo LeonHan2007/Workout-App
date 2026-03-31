@@ -221,6 +221,12 @@ def authenticate_user(username: str, password: str) -> User | None:
             return user
         return None
 
+
+def get_user_by_id(user_id: int) -> User | None:
+    """Return a User by primary key, or None if not found. Used for cookie re-hydration."""
+    with _session() as s:
+        return s.query(User).filter_by(id=user_id).first()
+
 # ─────────────────────────── workout template CRUD ───────────────────
 
 def insert_workout(user_id: int, data: dict) -> Workout:
