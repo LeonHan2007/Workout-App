@@ -117,7 +117,10 @@ def signup_page():
         else:
             user = create_user(new_username.strip(), new_email.strip(), new_password)
             if user:
-                st.success("Account created! Please log in.")
+                st.session_state.user = user
+                _cookies["user_id"] = str(user.id)
+                _cookies.save()
+                st.rerun()
             else:
                 st.error("Username or email already exists.")
 

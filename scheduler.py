@@ -242,7 +242,7 @@ def _find_free_slot(
     return None   # day is fully blocked
 
 
-def _pick_evenly_spaced_dates(
+def _pick_distributed_dates(
     candidate_dates: list[datetime.date],
     n: int,
     busy_intervals: list[tuple[datetime.datetime, datetime.datetime]],
@@ -250,12 +250,16 @@ def _pick_evenly_spaced_dates(
     preferred_end: datetime.time,
 ) -> list[tuple[datetime.date, datetime.time]]:
     """
-    Pick n dates from candidate_dates that:
-      1. Each have at least one free slot in the preferred window (or fallback).
-      2. Are as evenly spaced as possible (maximising minimum gap between sessions).
-    Returns a list of (date, start_time) tuples.
+    Pick n dates from candidate_dates such that:
+      1. Every date has a free slot (preferred window or fallback).
+      2. No two sessions are on consecutive days (at least 1 rest day between).
+      3. Sessions are spread as evenly as possible across the window — greedy
+         pick the earliest date that is >= (last_picked + ideal_gap) and not
+         the day after the last pick. If no such date exists before the window
+         runs out, fall back to the next available date with at least 1 rest day.
+    Returns a list of (date, start_time) tuples in chronological order.
     """
-    # Filter to only dates that have a free slot
+    # Build list of free (date, slot) pairs
     free: list[tuple[datetime.date, datetime.time]] = []
     for d in candidate_dates:
         slot = _find_free_slot(d, preferred_start, preferred_end, busy_intervals)
@@ -271,19 +275,28 @@ def _pick_evenly_spaced_dates(
     if n == 1:
         return [free[0]]
 
-    # Greedy even-spacing: pick first date, then always pick the date closest
-    # to (last_picked + ideal_gap), where ideal_gap = total_span / (n-1).
     total_span = (free[-1][0] - free[0][0]).days
-    ideal_gap  = total_span / (n - 1) if n > 1 else 0
+    ideal_gap  = total_span / (n - 1) if n > 1 else 2
+
+    # Only enforce the minimum-rest-day rule if it's geometrically possible.
+    # With n sessions in `total_span` days, you need at least (n-1) gap days.
+    # If ideal_gap >= 2 there's room for a rest day between every session.
+    min_gap = 2 if ideal_gap >= 2 else 1   # 1 = just "not the same day"
 
     chosen = [free[0]]
+
     for k in range(1, n):
-        target = chosen[0][0] + datetime.timedelta(days=round(ideal_gap * k))
-        # Pick the free date closest to the target that comes after the last chosen date
-        remaining = [f for f in free if f[0] > chosen[-1][0]]
-        if not remaining:
+        last_date = chosen[-1][0]
+        target    = chosen[0][0] + datetime.timedelta(days=round(ideal_gap * k))
+
+        eligible = [f for f in free if f[0] >= last_date + datetime.timedelta(days=min_gap)]
+        if not eligible:
+            # Last resort: just take the next available date after the last pick
+            eligible = [f for f in free if f[0] > last_date]
+        if not eligible:
             break
-        best = min(remaining, key=lambda f: abs((f[0] - target).days))
+
+        best = min(eligible, key=lambda f: abs((f[0] - target).days))
         chosen.append(best)
 
     return chosen
@@ -315,7 +328,7 @@ def generate_workout_plan(
     busy_intervals = [t for e in events if (t := _parse_event_times(e)) is not None]
 
     # Pick evenly-spaced dates with free slots
-    chosen = _pick_evenly_spaced_dates(
+    chosen = _pick_distributed_dates(
         candidate_dates, workout_days, busy_intervals, pref_start, pref_end
     )
 
@@ -431,49 +444,85 @@ def _color_for_title(title: str) -> str:
 
 
 def _render_plan():
-    """Display the cached plan as a visual weekly calendar grid."""
+    """Display the cached plan as a navigable weekly calendar grid."""
     plan = st.session_state.get("workout_plan")
     if not plan:
         return
 
+    from collections import defaultdict
+
     st.markdown("### Your Workout Schedule")
 
-    # ── Group sessions by week ────────────────────────────────────────
-    from collections import defaultdict
-    import math
+    # ── Build week index ──────────────────────────────────────────────
+    # Anchor all weeks to the Monday of the first session's week
+    first_date   = datetime.date.fromisoformat(plan[0]["date"])
+    first_monday = first_date - datetime.timedelta(days=first_date.weekday())
 
-    weeks: dict[int, list] = defaultdict(list)
-    first_date = datetime.date.fromisoformat(plan[0]["date"])
+    # Group sessions by which Monday their week starts on
+    weeks_map: dict[datetime.date, list] = defaultdict(list)
     for session in plan:
-        d = datetime.date.fromisoformat(session["date"])
-        week_num = (d - first_date).days // 7
-        weeks[week_num].append(session)
+        d      = datetime.date.fromisoformat(session["date"])
+        monday = d - datetime.timedelta(days=d.weekday())
+        weeks_map[monday].append(session)
 
-    DAY_LABELS  = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    all_mondays = sorted(weeks_map.keys())
 
-    for week_num in sorted(weeks.keys()):
-        sessions_in_week = weeks[week_num]
+    # Also include any weeks between first and last that have NO sessions
+    # so the arrows can browse empty weeks too
+    if all_mondays:
+        span_monday = all_mondays[0]
+        last_monday = all_mondays[-1]
+        while span_monday <= last_monday:
+            if span_monday not in weeks_map:
+                weeks_map[span_monday] = []   # empty week placeholder
+            span_monday += datetime.timedelta(weeks=1)
+        all_mondays = sorted(weeks_map.keys())
 
-        # Build a Mon-indexed week grid anchored to the first session of this week
-        anchor = datetime.date.fromisoformat(sessions_in_week[0]["date"])
-        week_monday = anchor - datetime.timedelta(days=anchor.weekday())
+    total_weeks = len(all_mondays)
 
-        # Map weekday index → session (0=Mon … 6=Sun)
-        day_map: dict[int, dict] = {}
-        for sess in sessions_in_week:
-            d = datetime.date.fromisoformat(sess["date"])
-            day_map[d.weekday()] = sess
+    # ── Week navigation state ─────────────────────────────────────────
+    if "cal_week_idx" not in st.session_state or st.session_state.get("_cal_plan_id") != id(plan):
+        st.session_state.cal_week_idx  = 0
+        st.session_state._cal_plan_id  = id(plan)
 
-        week_label = f"Week of {week_monday.strftime('%B %d')}"
-        st.markdown(f"**{week_label}**")
+    idx = st.session_state.cal_week_idx
+    idx = max(0, min(idx, total_weeks - 1))   # clamp
 
+    # ── Navigation arrows ─────────────────────────────────────────────
+    nav_l, nav_mid, nav_r = st.columns([1, 6, 1])
+    if nav_l.button("←", disabled=(idx == 0), key="cal_prev"):
+        st.session_state.cal_week_idx = idx - 1
+        st.rerun()
+    if nav_r.button("→", disabled=(idx == total_weeks - 1), key="cal_next"):
+        st.session_state.cal_week_idx = idx + 1
+        st.rerun()
+
+    week_monday      = all_mondays[idx]
+    sessions_in_week = weeks_map[week_monday]
+    nav_mid.markdown(
+        f"<div style='text-align:center;font-weight:600;padding-top:6px;'>"
+        f"Week of {week_monday.strftime('%B %d, %Y')}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Calendar grid ─────────────────────────────────────────────────
+    DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    day_map: dict[int, dict] = {}
+    for sess in sessions_in_week:
+        d = datetime.date.fromisoformat(sess["date"])
+        day_map[d.weekday()] = sess
+
+    if not sessions_in_week:
+        st.caption("No workouts scheduled this week.")
+    else:
         cols = st.columns(7)
         for i, (col, day_label) in enumerate(zip(cols, DAY_LABELS)):
             date_for_col = week_monday + datetime.timedelta(days=i)
-            sess = day_map.get(i)
+            sess         = day_map.get(i)
 
             if sess:
-                color = _color_for_title(sess["title"])
+                color        = _color_for_title(sess["title"])
                 session_type = sess["title"].replace("SkibFit — ", "").replace("SkibFit - ", "")
                 col.markdown(
                     f"""<div style="background:{color};border-radius:8px;padding:6px 4px;text-align:center;color:white;">
@@ -486,8 +535,8 @@ def _render_plan():
                 )
             else:
                 is_today = date_for_col == datetime.date.today()
-                border = "2px solid #6366f1" if is_today else "1px solid #e5e7eb"
-                bg = "#f0f0ff" if is_today else "#f9fafb"
+                border   = "2px solid #6366f1" if is_today else "1px solid #e5e7eb"
+                bg       = "#f0f0ff"           if is_today else "#f9fafb"
                 col.markdown(
                     f"""<div style="border:{border};background:{bg};border-radius:8px;padding:6px 4px;text-align:center;color:#9ca3af;">
                     <div style="font-size:0.65rem;">{day_label}</div>
@@ -496,11 +545,9 @@ def _render_plan():
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("")  # spacer between weeks
-
     # ── Legend ────────────────────────────────────────────────────────
     st.markdown(
-        """<div style="display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 12px;">
+        """<div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px;">
         <span style="display:flex;align-items:center;gap:4px;font-size:0.75rem;">
             <span style="width:12px;height:12px;background:#ef4444;border-radius:3px;display:inline-block;"></span> Push
         </span>
@@ -514,10 +561,10 @@ def _render_plan():
         unsafe_allow_html=True,
     )
 
-    # ── Session detail expanders ──────────────────────────────────────
+    # ── Session detail expanders (all sessions, not just current week) ─
     st.markdown("#### Session details")
     for session in plan:
-        d = datetime.date.fromisoformat(session["date"])
+        d     = datetime.date.fromisoformat(session["date"])
         label = f"{session['title']} — {d.strftime('%A, %b %d')} at {session['start_time']}"
         with st.expander(label):
             st.write(session["description"])
